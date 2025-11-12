@@ -1,4 +1,4 @@
-# Build-Your-Own-Reddis
+# Build-Your-Own-Redis
 
-Building Reddis with C++
+Building Redis with C++
 https://build-your-own.org/redis/
