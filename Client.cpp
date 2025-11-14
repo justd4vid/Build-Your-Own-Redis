@@ -1,14 +1,54 @@
 #include <iostream>
 #include <cstring>
+#include <cassert>
 
 #include <sys/socket.h>
-#include<netinet/ip.h>
+#include <netinet/ip.h>
 #include <unistd.h>
 
-static void die(const char *msg) {
-    std::cerr << msg << ": " << strerror(errno) << "\n";
-    std::exit(EXIT_FAILURE);
+#include "common.h"
+
+static int32_t query(int fd, const char *text) {
+    uint32_t len = (uint32_t) strlen(text); // calling strlen on C-style string
+    if(len > SOMAXCONN) {
+        msg("write() longer than SOMAXCONN.");
+        return -1;
+    }
+    
+    // == Write to Server ==
+    char wbuf[4 + len];
+    memcpy(wbuf, &len, 4);
+    memcpy(&wbuf[4], text, len);
+    write_all(fd, wbuf, 4 + len);
+    
+    // == Read from Server ==
+    char rbuf[4 + SOMAXCONN];
+    errno = 0; // set by sys if fails
+
+    // Read header (4 bytes)
+    int32_t err = read_full(fd, rbuf, 4);
+    if(err) {
+        msg(errno == 0 ? "EOF" : "read() header error");
+        return err;
+    }
+    memcpy(&len, rbuf, 4); // conver header to int; assume little endian
+    if(len > SOMAXCONN) {
+        msg("Cannot receive message: too long.");
+        return -1;
+    }
+
+    // Read request Body
+    err = read_full(fd, &rbuf[4], len);
+    if(err) {
+        msg("read() body error");
+        return err;
+    }
+    printf("Server says: %.*s\n", len, &rbuf[4]);
+
+    return 0;
 }
+
+
 
 int main() {
     std::cout << "Running Client." << "\n";
@@ -27,14 +67,17 @@ int main() {
     if (rv) die("connect()");
 
     // Write to our socket
-    char msg[] = "hello";
-    write(fd, msg, strlen(msg));
-    // Read from our socket
-    char rbuf[64] = {};
-    ssize_t n = read(fd, rbuf, sizeof(rbuf) - 1);
-    if(n < 0) die("read()");
+    int32_t err = query(fd, "Hello. This is the client.");
+    if(err) {
+        close(fd);
+        return 0;
+    }
 
-    printf("Server says: %s\n", rbuf);
+    err = query(fd, "Another message from the client!");
+    if(err) {
+        close(fd);
+        return 0;
+    }
 
     close(fd);
     return 0;

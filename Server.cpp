@@ -1,35 +1,48 @@
 #include <iostream>
 #include <cstring>      // for strerror()
+#include <cassert>
 
 #include <sys/socket.h> // for socket creation
 #include <netinet/ip.h> // for internal protocol addresses
 #include <unistd.h>     // for read(), write(), close()
 
-// Helper to print error and exit. 
-static void die(const char *msg) {
-    std::cerr << msg << ": " << strerror(errno) << "\n";
-    std::exit(EXIT_FAILURE);
-}
+#include "common.h"
 
-// Helper to print message. 
-static void msg(const char *msg) {
-    std::cout << msg << "\n";
-}
+// Read header + body. Write response.
+static int32_t one_request(int connfd) {
+    // == Read from Client ==
+    char rbuf[4 + SOMAXCONN];
+    errno = 0; // set by sys if fails
 
-static void dummy_process(int connfd) {
-    char rbuf[64] = {};
-    ssize_t n = read(connfd, rbuf, sizeof(rbuf) - 1); // read rbuf size chars!
-    if(n==0) {
-        msg("Client closed connection.");
-        return;
-    }else if(n<0) {
-        msg("read() error");
-        return;
+    // Read header (4 bytes)
+    int32_t err = read_full(connfd, rbuf, 4);
+    if(err) {
+        msg(errno == 0 ? "EOF" : "read() header error");
+        return err;
     }
-    printf("client says: %s\n", rbuf);
+    uint32_t len; // Header payload: how many bytes in body
+    memcpy(&len, rbuf, 4); // conver header to int; assume little endian
+    if(len > SOMAXCONN) {
+        msg("Cannot receive message: too long.");
+        return -1;
+    }
 
-    char wbuf[] = "world";
-    write(connfd, wbuf, strlen(wbuf));
+    // Read request Body
+    err = read_full(connfd, &rbuf[4], len);
+    if(err) {
+        msg("read() body error");
+        return err;
+    }
+    printf("Client says: %.*s\n", len, &rbuf[4]);
+    
+    // == Write to Client ==
+    const char reply[] = "Message received.";
+    len = (uint32_t)strlen(reply);
+
+    char wbuf[4 + sizeof(reply)];
+    memcpy(wbuf, &len, 4); // create header
+    memcpy(&wbuf[4], reply, len);
+    return write_all(connfd, wbuf, 4 + len);
 }
 
 int main() {
@@ -49,7 +62,7 @@ int main() {
 
 
     rv = listen(fd, SOMAXCONN);                                     // 3. Listen. Socket is created on listen(). SOMAXCONN is the 
-    if (rv) die("listen()");                                      //    maximum queue size for pending connections. It's 4096 on linux.
+    if (rv) die("listen()");                                        //    maximum queue size for pending connections. It's 4096 on linux.
                                                                     //    For modern use-case it has no affect, the queue never fills up.  
 
     while (true) {                                                  // 4. Accept connections. The server enters loop and processes each
@@ -60,7 +73,13 @@ int main() {
             continue; // error
         }
 
-        dummy_process(connfd);
+        // Serve the one connection. 
+        while(true) {
+            int32_t err = one_request(connfd);
+            if(err) {
+                break;
+            }
+        }
 
         close(connfd);
     }
