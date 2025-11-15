@@ -5,11 +5,11 @@ CXXFLAGS = -Wall -Wextra -std=c++17
 
 all: Server Client 
 
-Server: Server.cpp common.cpp
-	$(CXX) $(CXXFLAGS) Server.cpp common.cpp -o Server
+Server: src/Server.cpp src/common.cpp src/common.h
+	$(CXX) $(CXXFLAGS) src/Server.cpp src/common.cpp  -o Server
 
-Client: Client.cpp common.cpp
-	$(CXX) $(CXXFLAGS) Client.cpp common.cpp -o Client
+Client: src/Client.cpp src/common.cpp src/common.h
+	$(CXX) $(CXXFLAGS) src/Client.cpp src/common.cpp -o Client
 
 clean:
 	rm -f Server Client
