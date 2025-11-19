@@ -6,7 +6,19 @@
 #include <sys/socket.h> 
 #include <netinet/ip.h>
 #include <unistd.h>
+#include <fcntl.h>      // for F_SETFL, O_NONBLOCK
 
+void fd_set_nonblock(int fd) {
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+}
+
+void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
+    buf.insert(buf.end(), data, data + len);
+}
+
+void buf_consume(std::vector<uint8_t> &buf, size_t n) {
+    buf.erase(buf.begin(), buf.begin() + n);
+}
 
 int32_t read_full(int fd, char *buf, size_t n) {
     while (n > 0) {
@@ -32,10 +44,6 @@ int32_t write_all(int fd, const char *buf, size_t n) {
         buf += rv;
     }
     return 0;
-}
-
-void msg(const char *msg) {
-    std::cout << msg << "\n";
 }
 
 void die(const char *msg) {

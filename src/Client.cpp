@@ -5,47 +5,48 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <unistd.h>
+#include <vector>
 
 #include "common.h"
 
-static int32_t query(int fd, const char *text) {
-    uint32_t len = (uint32_t) strlen(text); // calling strlen on C-style string
+static int32_t send_request(int fd, const char *text, size_t vector_len) {
+    uint32_t len = (uint32_t) vector_len;
     if(len > SOMAXCONN) {
-        msg("write() longer than SOMAXCONN.");
+        std::cout << "Error: cannot send message because it is too long." << "\n";
         return -1;
     }
-    
-    // == Write to Server ==
     char wbuf[4 + len];
     memcpy(wbuf, &len, 4);
     memcpy(&wbuf[4], text, len);
-    write_all(fd, wbuf, 4 + len);
-    
-    // == Read from Server ==
-    char rbuf[4 + SOMAXCONN];
-    errno = 0; // set by sys if fails
+    return write_all(fd, wbuf, 4 + len);
+}
 
-    // Read header (4 bytes)
+static int32_t read_response(int fd) {
+    // Read header
+    char rbuf[4 + SOMAXCONN];
+    errno = 0;
     int32_t err = read_full(fd, rbuf, 4);
     if(err) {
-        msg(errno == 0 ? "EOF" : "read() header error");
+        std::cout << (errno == 0 ? "EOF" : "read() header error") << "\n";
         return err;
     }
-    memcpy(&len, rbuf, 4); // conver header to int; assume little endian
+
+    uint32_t len;
+    memcpy(&len, rbuf, 4);
     if(len > SOMAXCONN) {
-        msg("Cannot receive message: too long.");
+        std::cout << "Error: cannot receive message because it is too long." << "\n";
         return -1;
     }
 
-    // Read request Body
     err = read_full(fd, &rbuf[4], len);
     if(err) {
-        msg("read() body error");
+        std::cout << "Error: read() body error" << "\n";
         return err;
     }
-    printf("Server says: %.*s\n", len, &rbuf[4]);
+    printf("Server echoes: %.*s\n", len, &rbuf[4]);
 
     return 0;
+
 }
 
 
@@ -53,7 +54,7 @@ static int32_t query(int fd, const char *text) {
 int main() {
     std::cout << "Running Client." << "\n";
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);                       // 1. Obtain handle
+    int fd = socket(AF_INET, SOCK_STREAM, 0);                       // Select IPv4, TCP
 
     int val = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));    // 1.5. Set options
@@ -67,16 +68,20 @@ int main() {
     if (rv) die("connect()");
 
     // Write to our socket
-    int32_t err = query(fd, "Hello. This is the client.");
-    if(err) {
-        close(fd);
-        return 0;
+    std::vector<std::string> query_list = {
+        "test1", "test2", "test3000",
+    };
+    for (const std::string &s : query_list) {
+        int32_t err = send_request(fd, s.data(), s.size());
+        if (err) { 
+            std::cout << "Send_request failed for query string: " << s << "\n";
+        }
     }
-
-    err = query(fd, "Another message from the client!");
-    if(err) {
-        close(fd);
-        return 0;
+    for (size_t i = 0; i < query_list.size(); ++i) {
+        int32_t err = read_response(fd);
+        if (err) {
+            std::cout << "Read_response failed for query string: " << query_list[i] << "\n";
+        }
     }
 
     close(fd);

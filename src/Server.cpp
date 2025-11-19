@@ -6,7 +6,6 @@
 #include <sys/socket.h> // for socket creation
 #include <netinet/ip.h> // for internal protocol addresses
 #include <unistd.h>     // for read(), write(), close()
-#include <fcntl.h>      // for F_SETFL, O_NONBLOCK
 #include <poll.h>
 
 #include "common.h"
@@ -25,21 +24,6 @@ struct Conn {
     std::vector<uint8_t> incoming;  // data incoming to server
     std::vector<uint8_t> outgoing;  // data outgoing from server
 };
-
-// Helper: set socket to non-blocking read() & write()
-static void fd_set_nonblock(int fd) {
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-}
-
-// Helper: append data to buffer
-static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
-    buf.insert(buf.end(), data, data + len);
-}
-
-// Helper: remove data from buffer
-static void buf_consume(std::vector<uint8_t> &buf, size_t n) {
-    buf.erase(buf.begin(), buf.begin() + n);
-}
 
 // Helper: set up a new connection.
 static Conn *handle_accept(int fd) {
@@ -90,15 +74,15 @@ static int32_t try_one_request(Conn *conn) {
     if(4 + len > conn->incoming.size()) { // Protocol broken: expected body too short. 
         return false;
     }
+    const uint8_t *request_body = &conn->incoming[4];
 
-    const uint8_t *request = &conn->incoming[4];
-    buf_consume(conn->incoming, 4 + len);   // Consume the read bytes
-    print_bytes_as_chars(request, len);     // Print received bytes
-
-    
     // == Generate response (echo) ==
+    print_bytes_as_chars(request_body, len);                     // Print received bytes
+
     buf_append(conn->outgoing, (const uint8_t *)&len, 4);   // Append header
-    buf_append(conn->outgoing, request, len);               // Append body 
+    buf_append(conn->outgoing, request_body, len);               // Append body
+    
+    buf_consume(conn->incoming, 4 + len);                   // Consume the read bytes
     
     return true; // success
 }
@@ -115,7 +99,8 @@ static void handle_read(Conn *conn) {
     buf_append(conn->incoming, buf, (size_t)rv);
 
     // Make a request back
-    try_one_request(conn);
+    while(try_one_request(conn)) {
+    }
 
     if(conn->outgoing.size() > 0) { // Stop reads to send a response back. 
         conn->want_read = false;
@@ -127,6 +112,9 @@ static void handle_read(Conn *conn) {
 static void handle_write(Conn *conn) {
     assert(conn->outgoing.size() > 0);
     ssize_t rv = write(conn->fd, conn->outgoing.data(), conn->outgoing.size());
+    if (rv < 0 && errno == EAGAIN) {
+        return; // client socket not ready
+    }
     if(rv < 0) {
         conn->want_close = true; 
         return;
