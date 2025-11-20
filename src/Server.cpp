@@ -7,6 +7,7 @@
 #include <netinet/ip.h> // for internal protocol addresses
 #include <unistd.h>     // for read(), write(), close()
 #include <poll.h>
+#include <fcntl.h>      // for F_SETFL, O_NONBLOCK
 
 #include "common.h"
 
@@ -24,6 +25,15 @@ struct Conn {
     std::vector<uint8_t> incoming;  // data incoming to server
     std::vector<uint8_t> outgoing;  // data outgoing from server
 };
+
+// Set socket to non-blocking read() & write()
+static void fd_set_nonblock(int fd) {
+    errno = 0;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+    if(errno) {
+        die("Fcntl error");
+    }
+}
 
 // Helper: set up a new connection.
 static Conn *handle_accept(int fd) {
@@ -71,7 +81,7 @@ static int32_t try_one_request(Conn *conn) {
     }
 
     // == Read body ==
-    if(4 + len > conn->incoming.size()) { // Protocol broken: expected body too short. 
+    if(4 + len > conn->incoming.size()) { // expected body too short, maybe full msg hasn't come yet. 
         return false;
     }
     const uint8_t *request_body = &conn->incoming[4];
@@ -105,7 +115,7 @@ static void handle_read(Conn *conn) {
     if(conn->outgoing.size() > 0) { // Stop reads to send a response back. 
         conn->want_read = false;
         conn->want_write = true;
-    } // else: go back to reading.
+    } // else: continue reading
 }
 
 // Helper: called when conn->want_write == true.
@@ -125,13 +135,13 @@ static void handle_write(Conn *conn) {
     if(conn->outgoing.size() == 0) {
         conn->want_read = true;
         conn->want_write = false;
-    } // else: want to continue writing. 
+    } // else: continue writing
 }
 
 int main() {
     std::cout << "==== Running Server ====" << "\n";
 
-    // ==== Create listening socket ====
+    // == Create listening socket ==
     int fd = socket(AF_INET, SOCK_STREAM, 0);                           // Select IPv4, TCP
 
     int val = 1;                                                        // Turn on SO_REUSEADDR to allow server to use 
@@ -149,7 +159,7 @@ int main() {
     if (rv) die("listen()");                                            //   queue size for pending connections (4096 on linux)  
 
 
-    // ==== Event loop ====
+    // == Event loop ==
     std::vector<Conn *> fdToConn;           // Map of client connections, indexed with fd
     std::vector<struct pollfd> poll_args;   // Vector of args for poll()
     while(true) { 

@@ -1,24 +1,52 @@
 #include <iostream>
-#include <cstring>
 #include <cassert>
+#include <cstring>
+#include <vector>
 
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <unistd.h>
-#include <vector>
 
 #include "common.h"
 
-static int32_t send_request(int fd, const char *text, size_t vector_len) {
-    uint32_t len = (uint32_t) vector_len;
+// Write `n` bytes from buffer
+static int32_t write_all(int fd, const char *buf, size_t n) {
+    while(n > 0) {
+        ssize_t rv = write(fd, buf, n);
+        if(rv <= 0) {
+            return -1;
+        }
+        assert((size_t)rv <= n);
+        n -= (size_t)rv;
+        buf += rv;
+    }
+    return 0;
+}
+
+// Read `n` bytes and store in buffer
+static int32_t read_full(int fd, char *buf, size_t n) {
+    while (n > 0) {
+        ssize_t rv = read(fd, buf, n);
+        if(rv <= 0) {
+            return -1;
+        }
+        assert((size_t)rv <= n);
+        n -= (size_t)rv;
+        buf += rv;
+    }
+    return 0;
+}
+
+static int32_t send_request(int fd, const char *text, size_t len) {
     if(len > SOMAXCONN) {
         std::cout << "Error: cannot send message because it is too long." << "\n";
         return -1;
     }
-    char wbuf[4 + len];
-    memcpy(wbuf, &len, 4);
-    memcpy(&wbuf[4], text, len);
-    return write_all(fd, wbuf, 4 + len);
+
+    std::vector<char> wbuf(4 + len);
+    memcpy(wbuf.data(), &len, 4);
+    memcpy(wbuf.data() + 4, text, len);
+    return write_all(fd, wbuf.data(), 4 + len);
 }
 
 static int32_t read_response(int fd) {
@@ -52,25 +80,29 @@ static int32_t read_response(int fd) {
 
 
 int main() {
-    std::cout << "Running Client." << "\n";
+    std::cout << "==== Running Client ====" << "\n";
 
+    // == Create listening socket ==
     int fd = socket(AF_INET, SOCK_STREAM, 0);                       // Select IPv4, TCP
 
     int val = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));    // 1.5. Set options
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));    // Turn on SO_REUSEADDR
 
-    struct sockaddr_in addr = {};                                   // 3. Connect. Socket is created. 
+    struct sockaddr_in addr = {};                                   // Bind to address
     addr.sin_family = AF_INET;          // address family IPv4
     addr.sin_port = htons(1234);        // port 1234
     addr.sin_addr.s_addr = htonl(0);    // wildcard- accept connections anywhere
 
-    int rv = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+    int rv = connect(fd, (struct sockaddr *)&addr, sizeof(addr));   // Create socket
     if (rv) die("connect()");
 
-    // Write to our socket
+    // == Write to server ==
     std::vector<std::string> query_list = {
-        "test1", "test2", "test3000",
+        "test1", 
+        "test2", 
+        "test3000",
     };
+
     for (const std::string &s : query_list) {
         int32_t err = send_request(fd, s.data(), s.size());
         if (err) { 
