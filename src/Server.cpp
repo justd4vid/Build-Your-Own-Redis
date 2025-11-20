@@ -11,6 +11,7 @@
 
 #include "common.h"
 
+const size_t k_max_msg = 32 << 20;
 // ====== Connection Helpers ======
 
 // <summary>
@@ -75,7 +76,7 @@ static int32_t try_one_request(Conn *conn) {
     }
     uint32_t len = 0;
     memcpy(&len, conn->incoming.data(), 4);
-    if(len > SOMAXCONN) { // Protocol broken: request too long. 
+    if(len > k_max_msg) { // Protocol broken: request too long. 
         conn->want_close = true;
         return false;
     }

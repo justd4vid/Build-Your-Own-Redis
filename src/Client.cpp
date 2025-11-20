@@ -9,6 +9,9 @@
 
 #include "common.h"
 
+const size_t k_max_msg = 32 << 20;
+
+// ====== Lower-level read/write helpers ======
 // Write `n` bytes from buffer
 static int32_t write_all(int fd, const char *buf, size_t n) {
     while(n > 0) {
@@ -24,7 +27,7 @@ static int32_t write_all(int fd, const char *buf, size_t n) {
 }
 
 // Read `n` bytes and store in buffer
-static int32_t read_full(int fd, char *buf, size_t n) {
+static int32_t read_full(int fd, uint8_t *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = read(fd, buf, n);
         if(rv <= 0) {
@@ -37,8 +40,9 @@ static int32_t read_full(int fd, char *buf, size_t n) {
     return 0;
 }
 
+// ====== Higher-level request-response functions ======
 static int32_t send_request(int fd, const char *text, size_t len) {
-    if(len > SOMAXCONN) {
+    if(len > k_max_msg) {
         std::cout << "Error: cannot send message because it is too long." << "\n";
         return -1;
     }
@@ -51,27 +55,29 @@ static int32_t send_request(int fd, const char *text, size_t len) {
 
 static int32_t read_response(int fd) {
     // Read header
-    char rbuf[4 + SOMAXCONN];
+    std::vector<uint8_t> rbuf;
+    rbuf.resize(4);
     errno = 0;
-    int32_t err = read_full(fd, rbuf, 4);
+    int32_t err = read_full(fd, rbuf.data(), 4);
     if(err) {
         std::cout << (errno == 0 ? "EOF" : "read() header error") << "\n";
         return err;
     }
 
     uint32_t len;
-    memcpy(&len, rbuf, 4);
-    if(len > SOMAXCONN) {
+    memcpy(&len, rbuf.data(), 4);
+    if(len > k_max_msg) {
         std::cout << "Error: cannot receive message because it is too long." << "\n";
         return -1;
     }
 
-    err = read_full(fd, &rbuf[4], len);
+    rbuf.resize(4 + len);
+    err = read_full(fd, rbuf.data() + 4, len);
     if(err) {
         std::cout << "Error: read() body error" << "\n";
         return err;
     }
-    printf("Server echoes: %.*s\n", len, &rbuf[4]);
+    printf("Server echoes: %.*s\n", len, rbuf.data() + 4);
 
     return 0;
 
@@ -101,6 +107,7 @@ int main() {
         "test1", 
         "test2", 
         "test3000",
+        std::string(k_max_msg, 'z')
     };
 
     for (const std::string &s : query_list) {
